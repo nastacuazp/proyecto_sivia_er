@@ -8,37 +8,43 @@ from typing import Optional
 
 class GestorTraCI:
     def __init__(self, archivo_config: Path, puerto: int = 8813, modo_gui: bool = False):
-        self.archivo_config = archivo_config
+        self.archivo_config = str(archivo_config.resolve()) if isinstance(archivo_config, Path) else str(Path(archivo_config).resolve())
         self.puerto = int(puerto)
         self.modo_gui = modo_gui
         self.conexion_activa = False
-        self.tiempo_simulacion = 0
     
     def iniciar_sumo(self) -> bool:
         """
-        Inicia el servidor SUMO y conecta TraCI.
+        Inicia el servidor SUMO y conecta TraCI usando el método robusto traci.start().
         """
         try:
+            # 1. Determinar qué binario usar
+            binary = "sumo-gui" #if self.modo_gui else "sumo-gui"
+            
+            # 2. Construir el comando
+            # Nota: traci.start espera una lista de argumentos
             comando_sumo = [
-                "sumo-gui" if not self.modo_gui else "sumo-gui",
-                "-c", str(self.archivo_config),
-                "--remote-port", str(self.puerto),
-                "--step-length", "0.1"
+                binary,
+                "-c", self.archivo_config,
+                "--step-length", "0.1",
+                "--start", # Inicia la simulación automáticamente sin esperar play
+                # Opciones para evitar cierres inesperados o logs molestos
+                "--no-warnings", "true",
+                "--window-size", "1000,800"
             ]
             
             print(f"[TRACI_MANAGER] Iniciando SUMO: {' '.join(comando_sumo)}")
             
-            subprocess.Popen(comando_sumo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(2)
+            # 3. Iniciar SUMO usando traci.start
+            traci.start(comando_sumo, port=self.puerto, label="sim1")
             
-            #traci.connect("localhost", int(self.puerto))
-            traci.connect(port=self.puerto, host="localhost")
             self.conexion_activa = True
-            
-            print("[TRACI_MANAGER] Conexión TraCI establecida")
+            print("[TRACI_MANAGER] Conexión TraCI establecida correctamente")
             return True
+            
         except Exception as e:
             print(f"[TRACI_MANAGER] Error iniciando SUMO: {e}")
+            import traceback
             traceback.print_exc()
             return False
     
@@ -49,7 +55,6 @@ class GestorTraCI:
         try:
             for _ in range(pasos):
                 traci.simulationStep()
-                self.tiempo_simulacion += 0.1
             return True
         except Exception as e:
             print(f"[TRACI_MANAGER] Error avanzando simulación: {e}")
@@ -62,26 +67,37 @@ class GestorTraCI:
         try:
             return traci.simulation.getTime()
         except:
-            return self.tiempo_simulacion
+            return 0.0
     
     def generar_ambulancia(self, ambulancia_id: str, edge_inicio: str, ruta: list) -> bool:
         """
         Genera una ambulancia en el borde especificado.
         """
         try:
+            # Verificar conexión antes de operar
+            if not self.conexion_activa:
+                return False
+
             ruta_id = f"ruta_{ambulancia_id}"
             
-            if ruta_id not in traci.route.getIDList():
-                traci.route.add(ruta_id, ruta)
+            # Asegurar que la ruta sean strings puros
+            ruta_limpia = [str(e) for e in ruta]
             
-            traci.vehicle.add(
-                ambulancia_id,
-                ruta_id,
-                typeID="ambulancia",
-                departLane="best"
-            )
+            # Crear la ruta
+            traci.route.add(ruta_id, ruta_limpia)
             
+            # Definir tipo si no existe (fallback)
+            try:
+                traci.vehicletype.setLength("ambulancia", 7.0)
+            except:
+                traci.vehicle.add(ambulancia_id, ruta_id, typeID="DEFAULT_VEHTYPE")
+            else:
+                traci.vehicle.add(ambulancia_id, ruta_id, typeID="ambulancia")
+            
+            # Configurar vehículo
+            traci.vehicle.setSpeedMode(ambulancia_id, 31) # Ignorar algunas reglas de tráfico
             traci.vehicle.setSpeed(ambulancia_id, 50)
+            traci.vehicle.setColor(ambulancia_id, (255, 0, 0, 255)) # Rojo
             
             print(f"[TRACI_MANAGER] Ambulancia {ambulancia_id} generada en {edge_inicio}")
             return True
