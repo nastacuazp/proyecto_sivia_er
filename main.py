@@ -1,3 +1,4 @@
+import traceback
 import sys
 import time
 from pathlib import Path
@@ -15,6 +16,31 @@ from sumo_interface.traci_manager import GestorTraCI
 from sumo_interface.sim_controller import ControladorSimulacion
 from traffic_control.controller import ControladorCorredorVerde
 from notifications.notifier import Notificador
+
+def obtener_nodos_desde_edges(grafo, edge_inicio_id, edge_destino_id):
+    """
+    Busca en el grafo los nodos (junctions) que corresponden a los extremos 
+    de las calles (edges) indicadas.
+    """
+    nodo_start = None
+    nodo_end = None
+    
+    # Recorremos las aristas para encontrar qué nodos conectan los edges dados
+    for u, v, data in grafo.edges(data=True):
+        edge_id = data.get("edge_id")
+        
+        # Si encontramos la calle de inicio, tomamos el nodo destino 'v' (hacia adelante)
+        if edge_id == edge_inicio_id:
+            nodo_start = v 
+            
+        # Si encontramos la calle destino, tomamos el nodo inicio 'u'
+        if edge_id == edge_destino_id:
+            nodo_end = u 
+            
+        if nodo_start and nodo_end:
+            break
+            
+    return nodo_start, nodo_end
 
 def encontrar_ambulancia_cercana(grafo, evento):
     """
@@ -91,37 +117,66 @@ def ejecutar_sistema_emergencias():
         return False
     
     ambulancia_id = ambulancia["id"]
-    punto_partida = ambulancia["inicio"]
-    hospital_destino = ambulancia["hospital"]
+    edge_inicio = ambulancia["inicio"]     
+    edge_destino = ambulancia["hospital"]
     
     print("[MAIN] 6. Calculando ruta óptima...")
-    ruta_ambulancia = calcular_ruta_ambulancia(grafo, punto_partida, hospital_destino)
+    nodo_origen, nodo_destino = obtener_nodos_desde_edges(grafo, edge_inicio, edge_destino)
     
-    if not ruta_ambulancia or len(ruta_ambulancia) < 2:
-        print("[MAIN] Error: No se pudo calcular ruta")
+    if not nodo_origen or not nodo_destino:
+        print(f"[MAIN] Error: No se encontraron intersecciones para las calles {edge_inicio} o {edge_destino}")
         gestor_traci.cerrar_conexion()
         return False
     
-    distancia_ruta = sum(
-        grafo[ruta_ambulancia[i]][ruta_ambulancia[i+1]].get('peso', 100)
-        for i in range(len(ruta_ambulancia)-1)
-        if i < len(ruta_ambulancia)-1
-    )
+    # Calculamos la ruta usando NODOS (Intersecciones)
+    ruta_nodos = calcular_ruta_ambulancia(grafo, nodo_origen, nodo_destino)
+    
+    if not ruta_nodos or len(ruta_nodos) < 2:
+        print("[MAIN] Error: No se pudo calcular ruta entre intersecciones")
+        gestor_traci.cerrar_conexion()
+        return False
+    
+    # --- Reconstruir lista de Edges y calcular distancia ---
+    # TraCI necesita la lista de calles (edges), no de intersecciones
+    ruta_edges_traci = [edge_inicio] # La ruta empieza donde está el vehículo
+    distancia_ruta = 0
+    
+    # Recorremos la ruta de nodos para obtener los IDs de los edges y sus pesos
+    for i in range(len(ruta_nodos)-1):
+        u = ruta_nodos[i]
+        v = ruta_nodos[i+1]
+        
+        # Verificamos que la arista existe (debería, si Dijkstra funcionó)
+        if grafo.has_edge(u, v):
+            data_edge = grafo[u][v]
+            edge_id = data_edge.get('edge_id')
+            peso = data_edge.get('peso', 0)
+            
+            ruta_edges_traci.append(edge_id)
+            distancia_ruta += peso
+            
+    # Añadimos el edge final si no está en la lista (dependiendo de la topología)
+    if ruta_edges_traci[-1] != edge_destino:
+        ruta_edges_traci.append(edge_destino)
+
     tiempo_estimado = int(distancia_ruta / 50) if distancia_ruta > 0 else 0
     
-    print(f"[MAIN] Ruta calculada: {' -> '.join(ruta_ambulancia)}")
+    print(f"[MAIN] Ruta (Nodos): {' -> '.join(ruta_nodos)}")
+    print(f"[MAIN] Ruta (Edges para SUMO): {' -> '.join(ruta_edges_traci)}")
     print(f"[MAIN] Distancia: {distancia_ruta}m, Tiempo estimado: {tiempo_estimado}s")
     
     print("[MAIN] 7. Generando ambulancia en simulación...")
-    if not gestor_traci.generar_ambulancia(ambulancia_id, punto_partida, ruta_ambulancia):
+    # Pasamos a TraCI la lista de EDGES, que es lo que entiende
+    if not gestor_traci.generar_ambulancia(ambulancia_id, edge_inicio, ruta_edges_traci):
         print("[MAIN] Error: No se pudo generar ambulancia")
         gestor_traci.cerrar_conexion()
         return False
     
     print("[MAIN] 8. Inicializando corredor verde...")
+    # Usamos ruta_edges_traci también para el corredor verde
     controlador_corredor = ControladorCorredorVerde()
     
-    if not controlador_corredor.initialize_green_wave(ruta_ambulancia):
+    if not controlador_corredor.initialize_green_wave(ruta_edges_traci):
         print("[MAIN] Error: No se pudo inicializar corredor")
         gestor_traci.cerrar_conexion()
         return False
@@ -134,8 +189,8 @@ def ejecutar_sistema_emergencias():
     datos_alerta = {
         "tipo": "inicio_emergencia",
         "id_ambulancia": ambulancia_id,
-        "destino": hospital_destino,
-        "ruta": ruta_ambulancia,
+        "destino": edge_destino,          # Antes hospital_destino
+        "ruta": ruta_edges_traci,         # Antes ruta_ambulancia
         "distancia": distancia_ruta,
         "tiempo_estimado": tiempo_estimado,
         "posicion": (0, 0),
@@ -154,20 +209,23 @@ def ejecutar_sistema_emergencias():
                 print(f"[SIM] T={tiempo_actual:.1f}s | Posición: {datos_rastreo['posicion']} | Velocidad: {datos_rastreo['velocidad']:.2f} m/s")
     
     try:
-        controlador_corredor.execute_green_wave(ruta_ambulancia, ambulancia_id)
+        # Usamos ruta_edges_traci
+        controlador_corredor.execute_green_wave(ruta_edges_traci, ambulancia_id)
         
         controlador_sim.ejecutar_simulacion_paso_a_paso(duracion_simulacion, callback_simulacion)
         
         print("[MAIN] 10. Simulación completada")
         
+        # --- CORRECCIÓN DE VARIABLES AQUÍ TAMBIÉN ---
         datos_alerta_final = {
             "tipo": "emergencia_completada",
             "id_ambulancia": ambulancia_id,
-            "destino": hospital_destino,
-            "ruta": ruta_ambulancia,
+            "destino": edge_destino,      # Antes hospital_destino
+            "ruta": ruta_edges_traci,     # Antes ruta_ambulancia
             "distancia": distancia_ruta,
             "tiempo_estimado": tiempo_estimado,
-            "posicion": controlador_sim.obtener_datos_rastreo(ambulancia_id)['posicion'],
+            # obtener_datos_rastreo puede devolver None si el vehículo ya salió, añadir manejo seguro
+            "posicion": controlador_sim.obtener_datos_rastreo(ambulancia_id)['posicion'] if controlador_sim.obtener_datos_rastreo(ambulancia_id) else "Destino",
             "velocidad": 0.0,
             "mensaje": "Emergencia procesada exitosamente"
         }
@@ -193,4 +251,5 @@ if __name__ == "__main__":
         sys.exit(0 if exito else 1)
     except Exception as e:
         print(f"[MAIN] Error fatal: {e}")
+        traceback.print_exc()
         sys.exit(1)

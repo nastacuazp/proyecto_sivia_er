@@ -21,9 +21,9 @@ DURACION_VERDE_PRIORITARIO = 25
 TIEMPO_TRANSICION_SEGURA = 5
 
 AMBULANCIAS_DISPONIBLES = [
-    {"id": "ambulancia_1", "inicio": "edge1", "hospital": "hospital_edge"},
-    {"id": "ambulancia_2", "inicio": "edge2", "hospital": "hospital_edge"},
-    {"id": "ambulancia_3", "inicio": "edge3", "hospital": "hospital_edge"},
+    {"id": "ambulancia_1", "inicio": "421920983#1", "hospital": "24214589#1"},
+    {"id": "ambulancia_2", "inicio": "534500048#0", "hospital": "24214589#1"},
+    {"id": "ambulancia_3", "inicio": "431743797#1", "hospital": "24214589#1"},
 ]
 
 VELOCIDAD_AMBULANCIA = 50
