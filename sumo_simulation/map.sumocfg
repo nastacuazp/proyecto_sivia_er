@@ -4,6 +4,7 @@
         <route-files value="routes.rou.xml"/>
         <gui-settings-file value="viewsettings.xml"/>
         <additional-files value="output.add.xml"/> 
+        <scale value="15.0"/>
     </input>
 
     <time>
@@ -22,6 +23,6 @@
     </routing>
 
     <gui_only>
-        <delay value="150"/> 
+        <delay value="10"/> 
     </gui_only>
 </configuration>
