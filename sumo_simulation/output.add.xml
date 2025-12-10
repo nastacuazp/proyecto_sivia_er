@@ -1,0 +1,6 @@
+<additional>
+    <edgeData id="trafico_calles"
+              file="edgeData_output.xml"
+              freq="60"
+              excludeEmpty="false"/>
+</additional>

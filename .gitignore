@@ -1,0 +1,18 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# --- SUMO Traffic Simulation Outputs ---
+# Ignorar archivos generados durante la simulación para no llenar el repo
+*output.xml
+*stats.xml
+*log.txt
+
+
+sumo_simulation/edgeData_output.xml
+sumo_simulation/*.alt.xml
