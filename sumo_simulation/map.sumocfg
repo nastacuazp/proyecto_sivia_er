@@ -23,6 +23,6 @@
     </routing>
 
     <gui_only>
-        <delay value="10"/> 
+        <delay value="150"/> 
     </gui_only>
 </configuration>

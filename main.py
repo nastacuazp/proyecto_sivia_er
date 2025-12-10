@@ -2,12 +2,13 @@ import traceback
 import sys
 import time
 import traci
+import os
 from pathlib import Path
 
 from config import (
-    SUMO_CFG, SUMO_NET, PUERTO_TRACI, AMBULANCIAS_DISPONIBLES,
-    TIEMPO_ESPERA_ACCIDENTE, DURACION_AMBAR_PARPADEO,
-    DURACION_VERDE_PRIORITARIO, TIEMPO_TRANSICION_SEGURA, TIEMPO_OCURRENCIA_ACCIDENTE
+    SUMO_CFG, SUMO_NET, PUERTO_TRACI,
+    AMBULANCIAS_DISPONIBLES, TIEMPO_RESPUESTA, ARCHIVO_TRIGGER,
+    DURACION_AMBAR_PARPADEO, DURACION_VERDE_PRIORITARIO, TIEMPO_TRANSICION_SEGURA
 )
 
 from accident_event.listener import wait_for_accident_event
@@ -33,11 +34,9 @@ def obtener_nodos_desde_edges(grafo, edge_inicio_id, edge_destino_id):
         # Si encontramos la calle de inicio, tomamos el nodo destino 'v' (hacia adelante)
         if edge_id == edge_inicio_id:
             nodo_start = v 
-            
         # Si encontramos la calle destino, tomamos el nodo inicio 'u'
         if edge_id == edge_destino_id:
             nodo_end = u 
-            
         if nodo_start and nodo_end:
             break
             
@@ -48,7 +47,6 @@ def encontrar_ambulancia_cercana(grafo, evento):
     Encuentra la ambulancia más cercana al nodo del accidente.
     """
     id_interseccion = evento.get("id_interseccion", "junction_1")
-    
     ambulancias_disponibles = [a for a in AMBULANCIAS_DISPONIBLES]
     
     if not ambulancias_disponibles:
@@ -76,16 +74,9 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
     Ejecuta toda la lógica de cálculo y despacho cuando ocurre el evento.
     Retorna el ID de la ambulancia si tuvo éxito, o None si falló.
     """
-    print(f"\n[MAIN] ⚠ ¡EVENTO DE ACCIDENTE DETECTADO! T={gestor_traci.obtener_tiempo_simulacion()}")
+    print(f"[MAIN] INICIANDO DESPACHO DE UNIDAD... T={gestor_traci.obtener_tiempo_simulacion()}")
     
-    # 1. Crear evento simulado (ya que es por tiempo fijo)
-    evento_accidente = {
-        "id_interseccion": "junction_simulada",
-        "severidad": "alta"
-    }
-    
-    # 2. Seleccionar ambulancia
-    ambulancia = encontrar_ambulancia_cercana(grafo, evento_accidente)
+    ambulancia = encontrar_ambulancia_cercana(grafo, {})
     if not ambulancia:
         print("[MAIN] Error: No hay ambulancias disponibles")
         return None
@@ -96,7 +87,7 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
     
     print(f"[MAIN] Asignando {ambulancia_id} ({edge_inicio} -> {edge_destino})")
 
-    # 3. Calcular Ruta
+    # Calcular Ruta
     nodo_origen, nodo_destino = obtener_nodos_desde_edges(grafo, edge_inicio, edge_destino)
     if not nodo_origen or not nodo_destino:
         print("[MAIN] Error: No se pudieron traducir los edges a nodos")
@@ -107,7 +98,7 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
         print("[MAIN] Error: No se encontró ruta")
         return None
 
-    # 4. Convertir ruta de Nodos a Edges para SUMO
+    # Convertir a Edges
     ruta_edges_traci = [edge_inicio]
     distancia_ruta = 0
     for i in range(len(ruta_nodos)-1):
@@ -122,90 +113,119 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
 
     print(f"[MAIN] Ruta calculada: {len(ruta_edges_traci)} tramos, {distancia_ruta}m")
 
-    # 5. Generar Ambulancia en SUMO
+    # Generar en SUMO
     if not gestor_traci.generar_ambulancia(ambulancia_id, edge_inicio, ruta_edges_traci):
         print("[MAIN] Error al crear vehículo en SUMO")
         return None
 
-    # 6. Activar Corredor Verde
-    # Nota: Si tu controlador necesita los semáforos de la ruta, aquí se procesarían
+    # Corredor Verde
     controlador_corredor.execute_green_wave(ruta_edges_traci, ambulancia_id)
 
-    # 7. Notificar
+    # Notificar
     notificador.send_alert({
         "tipo": "despacho",
         "id_ambulancia": ambulancia_id,
         "destino": edge_destino,
         "ruta": ruta_edges_traci,
         "distancia": distancia_ruta,
-        "mensaje": f"Ambulancia {ambulancia_id} en camino."
+        "mensaje": f"Ambulancia {ambulancia_id} despachada tras tiempo de respuesta."
     })
 
     return ambulancia_id
 
 
-def ejecutar_simulacion_infinita():
+def ejecutar_simulacion_trigger():
     print("\n" + "="*60)
-    print("SISTEMA DE GESTIÓN DE TRÁFICO - MODO CONTINUO")
+    print("SISTEMA DE GESTIÓN - ESPERANDO TRIGGER EXTERNO")
     print("="*60 + "\n")
+    print(f"[INFO] Ejecute 'python trigger_accident.py' para provocar el accidente.")
 
     notificador = Notificador(activo=True)
-    
-    # 1. Iniciar SUMO
     gestor_traci = GestorTraCI(SUMO_CFG, PUERTO_TRACI, modo_gui=True)
+    
+    # Limpieza inicial: Asegurar que no hay un trigger viejo
+    if os.path.exists(ARCHIVO_TRIGGER):
+        os.remove(ARCHIVO_TRIGGER)
+
     if not gestor_traci.iniciar_sumo():
         return False
 
-    # 2. Cargar Grafo
     grafo = cargar_grafo_desde_sumo(SUMO_NET)
     controlador_corredor = ControladorCorredorVerde()
-    controlador_sim = ControladorSimulacion(gestor_traci)
 
-    # Variables de estado
+    # Estados
     ambulancia_activa = None
-    accidente_procesado = False
+    ambulancia_en_ruta = False
     
-    print(f"[MAIN] Simulación iniciada. Esperando T={TIEMPO_OCURRENCIA_ACCIDENTE} para accidente...")
+    # Variables de control de tiempos
+    tiempo_accidente_detectado = None # t_a
+    tiempo_despacho_programado = None # t_b (t_a + delay)
+    ambulancia_despachada = False
 
     try:
         while True:
-            # A. Avanzar simulación un paso
-            gestor_traci.avanzar_simulacion(1)
+            # 1. Avanzar simulación
+            if not gestor_traci.avanzar_simulacion(1):
+                print("[MAIN] Simulación detenida por SUMO.")
+                break
+            
             tiempo_actual = gestor_traci.obtener_tiempo_simulacion()
 
-            # B. Verificar si es momento del accidente
-            # Usamos un rango pequeño por si los pasos no son exactos (ej. 50.0 vs 50.1)
-            if not accidente_procesado and tiempo_actual >= TIEMPO_OCURRENCIA_ACCIDENTE:
-                ambulancia_activa = despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
-                accidente_procesado = True # Marcamos para que no se repita infinitamente
+            # 2. ESCUCHAR TRIGGER EXTERNO (Solo si no ha ocurrido aún)
+            if tiempo_accidente_detectado is None:
+                if os.path.exists(ARCHIVO_TRIGGER):
+                    # Borrar el archivo para no detectarlo doble
+                    try:
+                        os.remove(ARCHIVO_TRIGGER)
+                    except: pass 
+                    
+                    tiempo_accidente_detectado = tiempo_actual
+                    tiempo_despacho_programado = tiempo_actual + TIEMPO_RESPUESTA
+                    
+                    print(f"\n[MAIN] 💥 ¡SEÑAL DE ACCIDENTE RECIBIDA! T={tiempo_actual:.1f}")
+                    print(f"[MAIN] Iniciando protocolo. Despacho programado para T={tiempo_despacho_programado:.1f}")
+                    
+                    notificador.send_alert({
+                        "tipo": "accidente", 
+                        "mensaje": f"Reporte de accidente recibido. Preparando respuesta en {TIEMPO_RESPUESTA}s"
+                    })
 
-            # C. Lógica de seguimiento (si hay ambulancia)
+            # 3. VERIFICAR TIEMPO DE DESPACHO
+            if tiempo_despacho_programado and not ambulancia_despachada:
+                if tiempo_actual >= tiempo_despacho_programado:
+                    ambulancia_activa = despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
+                    ambulancia_despachada = True
+
+            # 4. SEGUIMIENTO DE AMBULANCIA
             if ambulancia_activa:
-                try:
-                    # Verificar si llegó al destino o salió del mapa
-                    if ambulancia_activa not in traci.vehicle.getIDList():
-                        print(f"[MAIN] Ambulancia {ambulancia_activa} ha llegado a su destino o salido del mapa.")
+                vehiculos_vivos = traci.vehicle.getIDList()
+                
+                if not ambulancia_en_ruta:
+                    if ambulancia_activa in vehiculos_vivos:
+                        print(f"[MAIN] Unidad {ambulancia_activa} operativa en la vía.")
+                        ambulancia_en_ruta = True
+                
+                elif ambulancia_en_ruta:
+                    if ambulancia_activa not in vehiculos_vivos:
+                        print(f"[MAIN] ✅ Ambulancia {ambulancia_activa} llegó al destino/hospital.")
                         notificador.send_alert({"tipo": "fin", "mensaje": "Emergencia finalizada"})
-                        ambulancia_activa = None # Dejar de rastrear
+                        
+                        # Resetear estados para permitir otro accidente futuro (opcional)
+                        ambulancia_activa = None
+                        ambulancia_en_ruta = False
+                        ambulancia_despachada = False
+                        tiempo_accidente_detectado = None
+                        tiempo_despacho_programado = None
+                        print("[MAIN] Sistema listo para siguiente emergencia...")
                     else:
-                        # Imprimir estado cada 10 segundos simulados
-                        if int(tiempo_actual) % 10 == 0:
-                            pos = traci.vehicle.getPosition(ambulancia_activa)
-                            vel = traci.vehicle.getSpeed(ambulancia_activa)
-                            print(f"[SIM] T={tiempo_actual:.1f} | Amb: {pos} | Vel: {vel:.2f} m/s")
-                except traci.TraCIException:
-                    ambulancia_activa = None
-
-            # D. Condición de salida (opcional, si no hay coches)
-            if traci.simulation.getMinExpectedNumber() <= 0 and tiempo_actual > TIEMPO_OCURRENCIA_ACCIDENTE + 100:
-                print("[MAIN] No hay más vehículos en la red. Finalizando.")
-                break
-
-            # Sleep opcional para no saturar CPU si es muy rápido
-            # time.sleep(0.01)
+                        if int(tiempo_actual) % 25 == 0:
+                            try:
+                                vel = traci.vehicle.getSpeed(ambulancia_activa)
+                                print(f"[SIM] T={tiempo_actual:.1f} | Velocidad: {vel:.1f} m/s")
+                            except: pass
 
     except KeyboardInterrupt:
-        print("\n[MAIN] Detenido por el usuario (Ctrl+C)")
+        print("\n[MAIN] Detenido por usuario.")
     except Exception as e:
         print(f"[MAIN] Error crítico: {e}")
         traceback.print_exc()
@@ -215,7 +235,7 @@ def ejecutar_simulacion_infinita():
 if __name__ == "__main__":
     try:
         #exito = ejecutar_sistema_emergencias()
-        exito = ejecutar_simulacion_infinita()
+        exito = ejecutar_simulacion_trigger()
         sys.exit(0 if exito else 1)
     except Exception as e:
         print(f"[MAIN] Error fatal: {e}")
