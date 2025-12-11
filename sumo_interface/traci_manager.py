@@ -71,38 +71,60 @@ class GestorTraCI:
     
     def generar_ambulancia(self, ambulancia_id: str, edge_inicio: str, ruta: list) -> bool:
         """
-        Genera una ambulancia en el borde especificado.
+        Genera una ambulancia, asegurando un ID de ruta único para evitar conflictos.
         """
         try:
-            # Verificar conexión antes de operar
             if not self.conexion_activa:
                 return False
 
-            ruta_id = f"ruta_{ambulancia_id}"
+            # --- CORRECCIÓN CLAVE ---
+            # Usamos un timestamp para que el ID de la ruta sea único en cada despacho
+            # Ejemplo: ruta_ambulancia_1_17005023
+            ruta_id = f"ruta_{ambulancia_id}_{int(time.time())}"
             
-            # Asegurar que la ruta sean strings puros
             ruta_limpia = [str(e) for e in ruta]
             
-            # Crear la ruta
+            # Crear la ruta (ahora el ID es único, así que no fallará)
             traci.route.add(ruta_id, ruta_limpia)
+
+            # Definir o asegurar el tipo de vehículo
+            tipo_vehiculo = "ambulancia"
+            if tipo_vehiculo not in traci.vehicletype.getIDList():
+                try:
+                    traci.vehicletype.copy("DEFAULT_VEHTYPE", tipo_vehiculo)
+                    traci.vehicletype.setLength(tipo_vehiculo, 6.5)
+                    traci.vehicletype.setVehicleClass(tipo_vehiculo, "emergency")
+                    traci.vehicletype.setColor(tipo_vehiculo, (255, 0, 0, 255))
+                    traci.vehicletype.setShapeClass(tipo_vehiculo, "emergency")
+                    traci.vehicletype.setSpeedFactor(tipo_vehiculo, 1.5)
+                except Exception as e:
+                    print(f"[TRACI] Advertencia configurando tipo: {e}")
+
+            # Limpiar vehículo anterior si existe (reutilización)
+            if ambulancia_id in traci.vehicle.getIDList():
+                try:
+                    traci.vehicle.remove(ambulancia_id)
+                except: pass
+
+            # Añadir el vehículo con la NUEVA ruta
+            traci.vehicle.add(
+                vehID=ambulancia_id,
+                routeID=ruta_id,
+                typeID=tipo_vehiculo,
+                depart="now",
+                departLane="best",
+                departSpeed="max"
+            )
             
-            # Definir tipo si no existe (fallback)
-            try:
-                traci.vehicletype.setLength("ambulancia", 7.0)
-            except:
-                traci.vehicle.add(ambulancia_id, ruta_id, typeID="DEFAULT_VEHTYPE")
-            else:
-                traci.vehicle.add(ambulancia_id, ruta_id, typeID="ambulancia")
+            traci.vehicle.setSpeedMode(ambulancia_id, 1)
             
-            # Configurar vehículo
-            traci.vehicle.setSpeedMode(ambulancia_id, 31) # Ignorar algunas reglas de tráfico
-            traci.vehicle.setSpeed(ambulancia_id, 50)
-            traci.vehicle.setColor(ambulancia_id, (255, 0, 0, 255)) # Rojo
-            
-            print(f"[TRACI_MANAGER] Ambulancia {ambulancia_id} generada en {edge_inicio}")
+            print(f"[TRACI_MANAGER] Ambulancia {ambulancia_id} generada en {edge_inicio} (Ruta ID: {ruta_id})")
             return True
+            
         except Exception as e:
             print(f"[TRACI_MANAGER] Error generando ambulancia: {e}")
+            import traceback
+            traceback.print_exc()
             return False
     
     def obtener_posicion_vehiculo(self, vehiculo_id: str) -> Optional[tuple]:
