@@ -197,6 +197,11 @@ def ejecutar_simulacion_trigger():
 
             # 4. SEGUIMIENTO DE AMBULANCIA (CON UBICACIÓN)
             if ambulancia_activa:
+                # Llamamos a esto en cada paso para mantener los semáforos en verde
+                # mientras la ambulancia se acerca.
+                if ambulancia_en_ruta:
+                    controlador_corredor.execute_green_wave(None, ambulancia_activa)
+
                 vehiculos_vivos = traci.vehicle.getIDList()
                 
                 if not ambulancia_en_ruta:
