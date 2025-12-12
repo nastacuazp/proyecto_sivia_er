@@ -92,6 +92,17 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
     if not nodo_origen or not nodo_destino:
         print("[MAIN] Error: No se pudieron traducir los edges a nodos")
         return None
+    
+    try:
+        # Obtenemos la posición (x, y) de la intersección (nodo) destino
+        # traci debe estar importado en main.py o accesible
+        posicion_accidente = traci.junction.getPosition(nodo_destino)
+        
+        # Dibujamos el marcador
+        gestor_traci.agregar_marcador_accidente(posicion_accidente[0], posicion_accidente[1])
+        
+    except Exception as e:
+        print(f"[MAIN] Advertencia: No se pudo visualizar el accidente: {e}")
 
     ruta_nodos = calcular_ruta_ambulancia(grafo, nodo_origen, nodo_destino)
     if not ruta_nodos:
@@ -212,6 +223,8 @@ def ejecutar_simulacion_trigger():
                 elif ambulancia_en_ruta:
                     if ambulancia_activa not in vehiculos_vivos:
                         print(f"[MAIN] ✅ Ambulancia {ambulancia_activa} llegó al destino/hospital.")
+                        
+                        gestor_traci.eliminar_marcador_accidente()                        
                         notificador.send_alert({"tipo": "fin", "mensaje": "Emergencia finalizada"})
                         
                         # Resetear para permitir otra emergencia

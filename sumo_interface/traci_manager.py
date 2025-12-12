@@ -126,6 +126,81 @@ class GestorTraCI:
             import traceback
             traceback.print_exc()
             return False
+        
+    def agregar_marcador_accidente(self, x: float, y: float):
+        """
+        Dibuja un marcador visual (POI) en la simulación para indicar el accidente.
+        """
+        try:
+            if not self.conexion_activa:
+                return False
+                
+            # ID del marcador
+            poi_id = "marcador_accidente"
+            
+            # Si ya existe, lo borramos para moverlo
+            if poi_id in traci.poi.getIDList():
+                traci.poi.remove(poi_id)
+            
+            # Añadir POI (Punto de Interés)
+            # Parámetros: ID, x, y, Color(R,G,B,A), Tipo, Capa, ArchivoImagen, Ancho, Alto
+            # Usamos un círculo rojo grande
+            traci.poi.add(
+                poi_id, 
+                x, y, 
+                (255, 0, 0, 255),  # Rojo puro
+                "accident",        # Tipo
+                100,               # Capa (Layer) alta para que se vea sobre las calles
+                "",                # Sin imagen (usa forma por defecto o círculo)
+                10, 10             # Ancho y Alto (grande para visibilidad)
+            )
+            
+            # Alternativa: Si quisieras un Polígono (ej. un círculo transparente alrededor)
+            poly_id = "zona_accidente"
+            if poly_id in traci.polygon.getIDList():
+                traci.polygon.remove(poly_id)
+                
+            traci.polygon.add(
+                poly_id,
+                self._generar_circulo(x, y, 15), # Radio 15m
+                (255, 0, 0, 100), # Rojo semitransparente
+                fill=True,
+                layer=90
+            )
+
+            print(f"[TRACI] 📍 Marcador de accidente colocado en ({x:.2f}, {y:.2f})")
+            return True
+        except Exception as e:
+            print(f"[TRACI] Error dibujando marcador: {e}")
+            return False
+
+    def _generar_circulo(self, x, y, radio, puntos=30):
+        """Genera una lista de coordenadas para dibujar un círculo."""
+        import math
+        shape = []
+        for i in range(puntos):
+            angle = 2 * math.pi * i / puntos
+            px = x + radio * math.cos(angle)
+            py = y + radio * math.sin(angle)
+            shape.append((px, py))
+        return shape
+    
+    def eliminar_marcador_accidente(self):
+        """Elimina los marcadores visuales del accidente"""
+        try:
+            if not self.conexion_activa: return False
+            
+            if "marcador_accidente" in traci.poi.getIDList():
+                traci.poi.remove("marcador_accidente")
+                
+            if "zona_accidente" in traci.polygon.getIDList():
+                traci.polygon.remove("zona_accidente")
+                
+            print("[TRACI] 🗑️ Marcador de accidente eliminado.")
+            return True
+        except Exception as e:
+            print(f"[TRACI] Error eliminando marcador: {e}")
+            return False
     
     def obtener_posicion_vehiculo(self, vehiculo_id: str) -> Optional[tuple]:
         """
