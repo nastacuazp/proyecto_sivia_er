@@ -1,0 +1,16 @@
+# Sistema de Gestión de Emergencias con SUMO
+# Dependencias de Python
+
+# Interfaz con SUMO
+traci>=1.15.0
+sumolib>=1.15.0
+
+# Algoritmos de grafos y enrutamiento
+networkx>=3.0
+
+# Utilidades estándar de Python (incluidas por defecto, listadas para referencia)
+# pathlib - manejo de rutas
+# os - operaciones del sistema
+# sys - parámetros del sistema
+# time - funciones de tiempo
+# traceback - manejo de errores
