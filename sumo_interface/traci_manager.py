@@ -173,17 +173,50 @@ class GestorTraCI:
         except Exception as e:
             print(f"[TRACI] Error dibujando marcador: {e}")
             return False
+        
+    def agregar_marcador_base(self, x: float, y: float, activo: bool = False):
+        """
+        Dibuja el marcador de la base de salida.
+        - activo=False: Color BLANCO (Planificación)
+        - activo=True:  Color VERDE (Ambulancia en simulación)
+        """
+        try:
+            if not self.conexion_activa: return False
+            
+            # Definir colores según estado
+            if activo:
+                color_poi = (0, 255, 0, 255)     # Verde solido
+                color_poly = (0, 255, 0, 80)     # Verde transparente
+                tipo = "base_activa"
+            else:
+                color_poi = (255, 255, 255, 255) # Blanco solido
+                color_poly = (255, 255, 255, 80) # Blanco transparente
+                tipo = "base_espera"
 
-    def _generar_circulo(self, x, y, radio, puntos=30):
-        """Genera una lista de coordenadas para dibujar un círculo."""
-        import math
-        shape = []
-        for i in range(puntos):
-            angle = 2 * math.pi * i / puntos
-            px = x + radio * math.cos(angle)
-            py = y + radio * math.sin(angle)
-            shape.append((px, py))
-        return shape
+            # Limpiar previo para actualizar color
+            self.eliminar_marcador_base()
+
+            # Dibujar POI (Icono central)
+            traci.poi.add("marcador_base", x, y, color_poi, tipo, 100, "", 10, 10)
+            
+            # Dibujar Polígono (Zona circular)
+            shape = self._generar_circulo(x, y, 15)
+            traci.polygon.add("zona_base", shape, color_poly, fill=True, layer=90)
+            
+            estado_str = "VERDE (Activo)" if activo else "BLANCO (Planificación)"
+            print(f"[TRACI] 🏥 Marcador Base colocado en ({x:.1f}, {y:.1f}) - {estado_str}")
+            return True
+        except Exception as e:
+            print(f"[TRACI] Error dibujando base: {e}")
+            return False
+
+    def eliminar_marcador_base(self):
+        try:
+            if not self.conexion_activa: return False
+            if "marcador_base" in traci.poi.getIDList(): traci.poi.remove("marcador_base")
+            if "zona_base" in traci.polygon.getIDList(): traci.polygon.remove("zona_base")
+            return True
+        except: return False
     
     def eliminar_marcador_accidente(self):
         """Elimina los marcadores visuales del accidente"""
@@ -201,6 +234,17 @@ class GestorTraCI:
         except Exception as e:
             print(f"[TRACI] Error eliminando marcador: {e}")
             return False
+        
+    def _generar_circulo(self, x, y, radio, puntos=30):
+        """Genera una lista de coordenadas para dibujar un círculo."""
+        import math
+        shape = []
+        for i in range(puntos):
+            angle = 2 * math.pi * i / puntos
+            px = x + radio * math.cos(angle)
+            py = y + radio * math.sin(angle)
+            shape.append((px, py))
+        return shape
     
     def obtener_posicion_vehiculo(self, vehiculo_id: str) -> Optional[tuple]:
         """

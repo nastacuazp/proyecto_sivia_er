@@ -156,6 +156,17 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
 
     node_destino_id = target_accident_junction
     print(f"[MAIN] 📍 Destino: {target_accident_junction} | Estrategia Ruta: {TIPO_DE_RUTA}")
+    
+    # DIBUJAR MARCADOR DE BASE (BLANCO)
+    try:
+        # Obtenemos la coordenada inicial del edge de partida
+        # Usamos traci para obtener la forma del carril 0 de ese edge
+        shape_inicio = traci.lane.getShape(f"{edge_inicio}_0")
+        if shape_inicio:
+            x_base, y_base = shape_inicio[0] # Primera coordenada (x, y)
+            gestor_traci.agregar_marcador_base(x_base, y_base, activo=False) # BLANCO
+    except Exception as e:
+        print(f"[MAIN] Warning visual base: {e}")
 
     # 2. Calcular Ruta Física
     nodo_origen, _ = obtener_nodos_desde_edges(grafo, edge_inicio, None)
@@ -268,6 +279,7 @@ def ejecutar_simulacion_trigger():
                     if ambulancia_activa not in vehiculos_vivos:
                         print(f"[MAIN] ✅ Misión completada.")
                         gestor_traci.eliminar_marcador_accidente()
+                        gestor_traci.eliminar_marcador_base()
                         notificador.send_alert({"tipo": "fin", "mensaje": "Misión finalizada"})
                         ambulancia_activa = None
                         ambulancia_en_ruta = False

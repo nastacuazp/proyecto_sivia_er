@@ -36,7 +36,7 @@ ACCIDENTE_ID_MANUAL = "cJ3_4" # POSICION DE CAMARA
 
 # Punto de Partida de ambulancia
 #EDGE_INICIO_MANUAL = None # Edge de inicio de ambulancia (None = Aleatorio)
-EDGE_INICIO_MANUAL = "431827289#6"  # Edge de inicio de ambulancia (Salida fija)
+EDGE_INICIO_MANUAL = "534500048#0"  # Edge de inicio de ambulancia (Salida fija)
 
 # Modo de Selección de Base (Solo si EDGE_INICIO_MANUAL es None)
 # "LEJANIA"  = Selecciona la base más lejana (Simula el peor caso).
