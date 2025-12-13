@@ -280,6 +280,7 @@ def ejecutar_simulacion_trigger():
                         print(f"[MAIN] ✅ Misión completada.")
                         gestor_traci.eliminar_marcador_accidente()
                         gestor_traci.eliminar_marcador_base()
+                        controlador_corredor.restaurar_todos_los_semaforos()
                         notificador.send_alert({"tipo": "fin", "mensaje": "Misión finalizada"})
                         ambulancia_activa = None
                         ambulancia_en_ruta = False

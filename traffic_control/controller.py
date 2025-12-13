@@ -6,6 +6,7 @@ from config import ACTIVAR_PRIORIDAD_SEMAFORICA, DISTANCIA_DETECCION_SEMAFORO
 
 class ControladorCorredorVerde:
     def __init__(self):
+        self.tls_original_programs = {}
         self.tls_modificados = set()
         self.semaforos_activos = {}
         self.tiempos_cambio = {}
@@ -99,27 +100,33 @@ class ControladorCorredorVerde:
             return False
 
         try:
-            # Obtenemos el siguiente semáforo en la ruta del vehículo
-            # Devuelve lista de (tlsID, tlsIndex, distancia, estado)
+            # Obtener el siguiente semáforo
             next_tls_info = traci.vehicle.getNextTLS(ambulancia_id)
             
             if not next_tls_info:
                 return False
 
-            # Tomamos el primer semáforo de la lista (el más cercano)
             tls_id, tls_index, distancia, estado_actual = next_tls_info[0]
 
-            # Si estamos dentro del rango de acción
             if distancia <= DISTANCIA_DETECCION_SEMAFORO:
+                # GUARDAR PROGRAMA ORIGINAL (SOLO LA PRIMERA VEZ)
+                if tls_id not in self.tls_original_programs:
+                    try:
+                        # Guardamos el ID del programa actual (ej: "0") ANTES de modificarlo
+                        prog_original = traci.trafficlight.getProgram(tls_id)
+                        self.tls_original_programs[tls_id] = prog_original
+                    except:
+                        # Si falla, asumimos "0" que es el default de SUMO
+                        self.tls_original_programs[tls_id] = "0"
+
                 self._forzar_verde_para_vehiculo(tls_id, ambulancia_id)
-                self.tls_modificados.add(tls_id)
                 return True
             
             return False
 
         except Exception as e:
-            print(f"[CONTROLLER] Error en Green Wave: {e}")
-            traceback.print_exc()
+            if "Connection" not in str(e):
+                print(f"[CONTROLLER] Error en Green Wave: {e}")
             return False
         
     def _forzar_verde_para_vehiculo(self, tls_id, vehiculo_id):
@@ -164,6 +171,34 @@ class ControladorCorredorVerde:
 
         except Exception as e:
             print(f"[CONTROLLER] Error forzando luz verde: {e}")
+            
+    def restaurar_todos_los_semaforos(self):
+        """
+        Reinicia el programa automático de todos los semáforos modificados.
+        """
+        if not self.tls_original_programs:
+            return
+
+        print(f"[CONTROLLER] 🔄 Restaurando {len(self.tls_original_programs)} semáforos a su ciclo normal...")
+        
+        for tls_id, prog_original in list(self.tls_original_programs.items()):
+            try:
+                # Forzamos a SUMO a cargar el programa original ("0")
+                # Esto "rompe" el bloqueo manual de setRedYellowGreenState
+                traci.trafficlight.setProgram(tls_id, prog_original)
+                
+                # Opcional: Forzar fase 0 para reiniciar ciclo limpiamente
+                # traci.trafficlight.setPhase(tls_id, 0) 
+            except Exception as e:
+                print(f"[CONTROLLER] Error restaurando {tls_id} al programa '{prog_original}': {e}")
+                
+                # Fallback: Intentar forzar "0" si el original falló
+                try: traci.trafficlight.setProgram(tls_id, "0")
+                except: pass
+        
+        # Limpiamos el registro
+        self.tls_original_programs.clear()
+        print("[CONTROLLER] ✅ Semáforos desbloqueados.")
 
     def _es_mismo_edge(self, lane1, lane2):
         """Ayuda a comparar si dos carriles pertenecen a la misma calle base."""
