@@ -4,7 +4,7 @@
         <route-files value="routes.rou.xml"/>
         <gui-settings-file value="viewsettings.xml"/>
         <additional-files value="output.add.xml"/> 
-        <scale value="15.0"/>
+        <scale value="5.0"/>
     </input>
 
     <time>

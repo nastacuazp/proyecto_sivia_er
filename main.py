@@ -2,12 +2,14 @@ import traceback
 import sys
 import time
 import traci
+import math
 import os
 from pathlib import Path
 
 from config import (
-    SUMO_CFG, SUMO_NET, PUERTO_TRACI,
-    AMBULANCIAS_DISPONIBLES, TIEMPO_RESPUESTA, ARCHIVO_TRIGGER
+    SUMO_CFG, SUMO_NET, PUERTO_TRACI, ARCHIVO_TRIGGER,
+    AMBULANCIAS_DISPONIBLES, TIEMPO_RESPUESTA,
+    ACCIDENTE_ID_MANUAL, EDGE_INICIO_MANUAL, MODO_SELECCION_BASE, TIPO_DE_RUTA
 )
 
 from accident_event.listener import wait_for_accident_event #eliminar?
@@ -16,14 +18,9 @@ from routing.dijkstra import compute_optimal_route
 from sumo_interface.traci_manager import GestorTraCI
 from sumo_interface.sim_controller import ControladorSimulacion
 from traffic_control.controller import ControladorCorredorVerde
-from config_data.loader import cargar_configuraciones, seleccionar_base_mas_lejana
+from config_data.loader import cargar_configuraciones, seleccionar_base_automatica
 from notifications.notifier import Notificador
 
-# --- VARIABLES GLOBALES DE SELECCIÓN MANUAL ---
-ACCIDENTE_ID_MANUAL = "cJ3_4"  # CAMBIAR LUGAR DE CAMARA/ACCIDENTE
-
-EDGE_INICIO_MANUAL = None # Edge de inicio de ambulancia (None = Aleatorio)
-# EDGE_INICIO_MANUAL = "431827289#6"  # Edge de inicio de ambulancia (Salida fija)
 
 ZONAS_ACCIDENTE, BASES_AMBULANCIA, SALIDAS = cargar_configuraciones()
 
@@ -33,7 +30,6 @@ def obtener_nodos_desde_edges(grafo, edge_inicio_id, edge_destino_id):
     de las calles (edges) indicadas.
     """
     nodo_start = None
-    nodo_end = None
     # Convertimos a string para asegurar comparación
     edge_inicio_id = str(edge_inicio_id)
     
@@ -45,6 +41,78 @@ def obtener_nodos_desde_edges(grafo, edge_inicio_id, edge_destino_id):
         # si ya tenemos el ID del junction destino desde el JSON
         
     return nodo_start, None
+
+def distancia_euclidiana(p1, p2):
+    return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
+def encontrar_nodo_desvio_lejano(grafo, nodo_inicio, nodo_fin):
+    """
+    Busca un nodo en el grafo que maximice la distancia total (Inicio->Nodo + Nodo->Fin).
+    """
+    try:
+        pos_inicio = traci.junction.getPosition(nodo_inicio)
+        pos_fin = traci.junction.getPosition(nodo_fin)
+        
+        mejor_nodo = None
+        max_distancia = -1
+        
+        # Iteramos sobre todos los nodos del grafo para encontrar el más lejano
+        for nodo in grafo.nodes():
+            if nodo == nodo_inicio or nodo == nodo_fin:
+                continue
+                
+            try:
+                # Obtenemos posición candidata
+                pos_candidato = traci.junction.getPosition(nodo)
+                
+                # Calculamos cuánto desvío aporta
+                dist_a = distancia_euclidiana(pos_inicio, pos_candidato)
+                dist_b = distancia_euclidiana(pos_candidato, pos_fin)
+                dist_total = dist_a + dist_b
+                
+                if dist_total > max_distancia:
+                    max_distancia = dist_total
+                    mejor_nodo = nodo
+            except:
+                continue
+                
+        return mejor_nodo
+    except Exception as e:
+        print(f"[ROUTING] Error buscando desvío: {e}")
+        return None
+
+def calcular_ruta_con_estrategia(grafo, nodo_inicio, nodo_fin):
+    """
+    Calcula la ruta según la estrategia definida en config.py (CORTA o LARGA).
+    """
+    if TIPO_DE_RUTA == "CORTA":
+        # Estrategia Directa (Dijkstra Estándar)
+        return compute_optimal_route(grafo, nodo_inicio, nodo_fin)
+    
+    elif TIPO_DE_RUTA == "LARGA":
+        # Estrategia de Desvío (Waypoint)
+        print("[ROUTING] 🔄 Estrategia 'LARGA': Calculando desvío...")
+        nodo_intermedio = encontrar_nodo_desvio_lejano(grafo, nodo_inicio, nodo_fin)
+        
+        if not nodo_intermedio:
+            print("[ROUTING] Advertencia: No se encontró nodo de desvío. Usando ruta corta.")
+            return compute_optimal_route(grafo, nodo_inicio, nodo_fin)
+            
+        print(f"[ROUTING] 📍 Punto de desvío seleccionado: {nodo_intermedio}")
+        
+        # Calcular Tramo 1: Inicio -> Desvío
+        ruta_1 = compute_optimal_route(grafo, nodo_inicio, nodo_intermedio)
+        # Calcular Tramo 2: Desvío -> Fin
+        ruta_2 = compute_optimal_route(grafo, nodo_intermedio, nodo_fin)
+        
+        if ruta_1 and ruta_2:
+            # Unir rutas (ruta_2[1:] para no repetir el nodo intermedio)
+            return ruta_1 + ruta_2[1:]
+        else:
+            print("[ROUTING] Error: No se pudo conectar el desvío. Usando ruta corta.")
+            return compute_optimal_route(grafo, nodo_inicio, nodo_fin)
+            
+    return None
 
 def encontrar_ambulancia_cercana(grafo, evento):
     """
@@ -63,15 +131,7 @@ def encontrar_ambulancia_cercana(grafo, evento):
     return ambulancia_elegida
 
 def calcular_ruta_ambulancia(grafo, punto_partida, punto_llegada):
-    """
-    Calcula la ruta óptima para la ambulancia.
-    """
-    ruta = compute_optimal_route(grafo, punto_partida, punto_llegada)
-    
-    if not ruta:
-        ruta = None
-    
-    return ruta
+    return compute_optimal_route(grafo, punto_partida, punto_llegada)
 
 def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador):
     """
@@ -79,48 +139,42 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
     """
     print(f"[MAIN] 🚑 TIEMPO DE RESPUESTA CUMPLIDO. DESPACHANDO UNIDAD... T={gestor_traci.obtener_tiempo_simulacion()}")
     
-    target_accident_junction = ACCIDENTE_ID_MANUAL
+    target_accident_junction = ACCIDENTE_ID_MANUAL 
     ambulancia_id = "ambulancia_1"
     
-    # --- NUEVA LÓGICA DE SELECCIÓN DE INICIO ---
+    # 1. Selección de Base (Origen)
     if EDGE_INICIO_MANUAL is not None:
-        # CASO 1: Inicio Manual Forzado
-        print(f"[MAIN] ⚠️ Modo Manual Activado: Saliendo desde '{EDGE_INICIO_MANUAL}'")
+        print(f"[MAIN] ⚠️ Modo Manual (Config): Saliendo desde '{EDGE_INICIO_MANUAL}'")
         edge_inicio = EDGE_INICIO_MANUAL
-        datos_base = {"id": "MANUAL", "junction_logico": "N/A"}
-        distancia_logica = 0.0
+        datos_base = {"id": "MANUAL_CFG"}
     else:
-        # CASO 2: Cálculo Automático (Base más lejana)
-        datos_base, distancia_logica = seleccionar_base_mas_lejana(target_accident_junction, BASES_AMBULANCIA)
-        
-        if not datos_base:
-            print("[MAIN] Error: No se encontraron bases de ambulancia configuradas.")
-            return None
-            
+        print(f"[MAIN] 🤖 Modo Automático: Buscando base por '{MODO_SELECCION_BASE}'...")
+        datos_base, dist_logica = seleccionar_base_automatica(target_accident_junction, BASES_AMBULANCIA, modo=MODO_SELECCION_BASE)
+        if not datos_base: return None
         edge_inicio = datos_base["edge_entrada"]
-        print(f"[MAIN] 🏥 Base Automática: {datos_base.get('id')} (Distancia lógica: {distancia_logica:.2f})")
-    # ---------------------------------------------
+        print(f"[MAIN] 🏥 Base Seleccionada: {datos_base.get('id')} (Dist. Lógica: {dist_logica:.2f})")
 
     node_destino_id = target_accident_junction
-    print(f"[MAIN] 📍 Destino Accidente: {target_accident_junction}")
-    print(f"[MAIN] 🛣️ Ruta prevista: {edge_inicio} -> {node_destino_id}")
+    print(f"[MAIN] 📍 Destino: {target_accident_junction} | Estrategia Ruta: {TIPO_DE_RUTA}")
 
-    # 1. Calcular Ruta (Nodos)
+    # 2. Calcular Ruta Física
     nodo_origen, _ = obtener_nodos_desde_edges(grafo, edge_inicio, None)
     
     if not nodo_origen:
-        print(f"[MAIN] Error: El edge de inicio '{edge_inicio}' no se encuentra en el grafo o no conecta a ningún nodo.")
+        print(f"[MAIN] Error: Edge inicio '{edge_inicio}' no conecta.")
         return None
 
-    ruta_nodos = calcular_ruta_ambulancia(grafo, nodo_origen, node_destino_id)
+    # --- CAMBIO AQUÍ: Llamamos a la nueva función de estrategia ---
+    ruta_nodos = calcular_ruta_con_estrategia(grafo, nodo_origen, node_destino_id)
+    # -------------------------------------------------------------
+    
     if not ruta_nodos:
-        print("[MAIN] Error: No se encontró ruta física en el grafo entre el inicio y el accidente.")
+        print("[MAIN] Error: No hay ruta física disponible.")
         return None
 
-    # 2. Convertir a Edges para SUMO
+    # 3. Convertir a Edges
     ruta_edges_traci = [edge_inicio]
     distancia_ruta = 0
-    
     for i in range(len(ruta_nodos)-1):
         u, v = ruta_nodos[i], ruta_nodos[i+1]
         if grafo.has_edge(u, v):
@@ -128,33 +182,27 @@ def despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
             ruta_edges_traci.append(data.get('edge_id'))
             distancia_ruta += data.get('peso', 0)
     
-    print(f"[MAIN] Ruta calculada: {len(ruta_edges_traci)} tramos, {distancia_ruta:.1f}m")
+    print(f"[MAIN] Ruta Final: {len(ruta_edges_traci)} tramos, {distancia_ruta:.1f}m")
 
-    # 3. Visualizar Marcador
+    # 4. Visualizar y Generar
     try:
         pos = traci.junction.getPosition(node_destino_id)
         gestor_traci.agregar_marcador_accidente(pos[0], pos[1])
-    except Exception as e:
-        print(f"[MAIN] Warning visual: {e}")
+    except: pass
 
-    # 4. Generar en SUMO
     if not gestor_traci.generar_ambulancia(ambulancia_id, edge_inicio, ruta_edges_traci):
-        print("[MAIN] Error al crear vehículo en SUMO")
         return None
 
-    # 5. Activar Corredor Verde
     controlador_corredor.execute_green_wave(ruta_edges_traci, ambulancia_id)
 
-    # 6. Notificar
-    origen_msg = f"Base {datos_base.get('id')}" if EDGE_INICIO_MANUAL is None else f"Punto Manual {edge_inicio}"
-    
+    origen_txt = f"Base {datos_base.get('id')}" if EDGE_INICIO_MANUAL is None else "Manual"
     notificador.send_alert({
         "tipo": "despacho",
         "id_ambulancia": ambulancia_id,
         "destino": node_destino_id,
         "ruta": ruta_edges_traci,
         "distancia": distancia_ruta,
-        "mensaje": f"Ambulancia despachada desde {origen_msg}."
+        "mensaje": f"Ambulancia en camino ({origen_txt} - Ruta {TIPO_DE_RUTA})."
     })
 
     return ambulancia_id
@@ -181,7 +229,6 @@ def ejecutar_simulacion_trigger():
 
     ambulancia_activa = None
     ambulancia_en_ruta = False
-    
     tiempo_accidente_detectado = None
     tiempo_despacho_programado = None
     ambulancia_despachada = False
@@ -194,46 +241,34 @@ def ejecutar_simulacion_trigger():
             
             tiempo_actual = gestor_traci.obtener_tiempo_simulacion()
 
-            # Trigger
             if tiempo_accidente_detectado is None:
                 if os.path.exists(ARCHIVO_TRIGGER):
                     try: os.remove(ARCHIVO_TRIGGER)
                     except: pass 
-                    
                     tiempo_accidente_detectado = tiempo_actual
                     tiempo_despacho_programado = tiempo_actual + TIEMPO_RESPUESTA
-                    
                     print(f"\n[MAIN] 💥 ¡SEÑAL DE ACCIDENTE RECIBIDA! T={tiempo_actual:.1f}")
-                    notificador.send_alert({
-                        "tipo": "accidente", 
-                        "mensaje": f"Reporte recibido. Despacho en {TIEMPO_RESPUESTA}s"
-                    })
+                    notificador.send_alert({"tipo": "accidente", "mensaje": f"Despacho en {TIEMPO_RESPUESTA}s"})
 
-            # Despacho
             if tiempo_despacho_programado and not ambulancia_despachada:
                 if tiempo_actual >= tiempo_despacho_programado:
                     ambulancia_activa = despachar_emergencia(grafo, gestor_traci, controlador_corredor, notificador)
                     ambulancia_despachada = True
 
-            # Seguimiento
             if ambulancia_activa:
                 if ambulancia_en_ruta:
                     controlador_corredor.execute_green_wave(None, ambulancia_activa)
 
                 vehiculos_vivos = traci.vehicle.getIDList()
-                
                 if not ambulancia_en_ruta:
                     if ambulancia_activa in vehiculos_vivos:
                         print(f"[MAIN] 🚑 Unidad {ambulancia_activa} operativa.")
                         ambulancia_en_ruta = True
-                
                 elif ambulancia_en_ruta:
                     if ambulancia_activa not in vehiculos_vivos:
-                        print(f"[MAIN] ✅ Ambulancia {ambulancia_activa} completó la misión.")
+                        print(f"[MAIN] ✅ Misión completada.")
                         gestor_traci.eliminar_marcador_accidente()
                         notificador.send_alert({"tipo": "fin", "mensaje": "Misión finalizada"})
-                        
-                        # Reset
                         ambulancia_activa = None
                         ambulancia_en_ruta = False
                         ambulancia_despachada = False

@@ -56,22 +56,35 @@ def calcular_distancia(junc1, junc2):
     x2, y2 = parsear_coordenadas(junc2)
     return math.sqrt((x2 - x1)**2 + (y2 - y1)**2)
 
-def seleccionar_base_mas_lejana(id_accidente, bases_data):
+def seleccionar_base_automatica(id_accidente, bases_data, modo="LEJANIA"):
     """
-    Selecciona la base cuya 'junction_logico' esté más lejos del 'id_accidente'.
+    Selecciona la base según el modo especificado:
+    - "LEJANIA": Busca la distancia máxima.
+    - "CERCANIA": Busca la distancia mínima.
     """
     mejor_base_id = None
-    max_distancia = -1
     detalles_seleccion = {}
+    
+    # Inicializamos según el modo
+    if modo == "CERCANIA":
+        mejor_distancia = float('inf') # Buscamos menor que infinito
+    else:
+        mejor_distancia = -1.0 # Buscamos mayor que negativo
 
     for base_id, datos in bases_data.items():
         base_junction = datos["junction_logico"]
         dist = calcular_distancia(id_accidente, base_junction)
         
-        if dist > max_distancia:
-            max_distancia = dist
+        actualizar = False
+        if modo == "CERCANIA":
+            if dist < mejor_distancia: actualizar = True
+        else: # LEJANIA
+            if dist > mejor_distancia: actualizar = True
+            
+        if actualizar:
+            mejor_distancia = dist
             mejor_base_id = base_id
             detalles_seleccion = datos
-            detalles_seleccion["id"] = base_id # Añadimos el ID al dict
+            detalles_seleccion["id"] = base_id
 
-    return detalles_seleccion, max_distancia
+    return detalles_seleccion, mejor_distancia
