@@ -1,0 +1,30 @@
+{
+  "base_1": {
+    "edge_entrada": "-432811309#2",
+    "junction_logico": "cJ1_1"
+  },
+  "base_2": {
+    "edge_entrada": "431827289#6",
+    "junction_logico": "cJ1_2"
+  },
+  "base_3": {
+    "edge_entrada": "24214589#1",
+    "junction_logico": "cJ3_7"
+  },
+  "base_4": {
+    "edge_entrada": "431994305#0",
+    "junction_logico": "cJ4a_3"
+  },
+  "base_5": {
+    "edge_entrada": "24215127#10",
+    "junction_logico": "cJ6_8"
+  },
+  "base_6": {
+    "edge_entrada": "534500048#0",
+    "junction_logico": "cJ8_5"
+  },
+  "base_7": {
+    "edge_entrada": "431743801#1",
+    "junction_logico": "cJ8_4"
+  }
+}

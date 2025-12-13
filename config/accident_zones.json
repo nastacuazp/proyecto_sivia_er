@@ -1,0 +1,61 @@
+{
+  "cJ1": {
+    "tipo": "simple",
+    "column": 1,
+    "zones": ["cJ1_1", "cJ1_2", "cJ1_3"]
+  },
+
+  "cJ2": {
+    "tipo": "simple",
+    "column": 2,
+    "zones": ["cJ2_1", "cJ2_2", "cJ2_3"]
+  },
+
+  "cJ3": {
+    "tipo": "simple",
+    "column": 3,
+    "zones": ["cJ3_1", "cJ3_2", "cJ3_3", "cJ3_4", "cJ3_5", "cJ3_6", "cJ3_7"]
+  },
+
+  "cJ4": {
+    "tipo": "complejo",
+    "subzonas": {
+      "a": {
+        "lado": "izquierda",
+        "zones": ["cJ4a_1", "cJ4a_2", "cJ4a_3"]
+      },
+      "ab": {
+        "lado": "central",
+        "zones": ["cJ4ab_1", "cJ4ab_2", "cJ4ab_3"]
+      },
+      "b": {
+        "lado": "derecha",
+        "zones": ["cJ4b_1", "cJ4b_2", "cJ4b_3", "cJ4b_4"]
+      }
+    }
+  },
+
+  "cJ5": {
+    "tipo": "simple",
+    "column": 5,
+    "zones": ["cJ5_1", "cJ5_2", "cJ5_3", "cJ5_4", "cJ5_5", "cJ5_6", "cJ5_7"]
+  },
+
+  "cJ6": {
+    "tipo": "simple",
+    "column": 6,
+    "zones": ["cJ6_1", "cJ6_2", "cJ6_3", "cJ6_4", "cJ6_5", "cJ6_6", "cJ6_7", "cJ6_8"]
+  },
+
+  "cJ7": {
+    "tipo": "simple",
+    "column": 7,
+    "zones": ["cJ7_1", "cJ7_2", "cJ7_3", "cJ7_4", "cJ7_5"]
+  },
+
+  "cJ8": {
+    "tipo": "simple",
+    "column": 8,
+    "zones": ["cJ8_1", "cJ8_2", "cJ8_3", "cJ8_4", "cJ8_5"]
+  }
+}
